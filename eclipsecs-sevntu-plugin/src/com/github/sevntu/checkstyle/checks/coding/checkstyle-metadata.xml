@@ -284,6 +284,15 @@
             <message-key key="name.convention.for.test.classes" />
         </rule-metadata>
         
+        <rule-metadata name="%NonAccessibleTypeCheck.name" internal-name="NonAccessibleTypeCheck" parent="TreeWalker">
+            <alternative-name internal-name="com.github.sevntu.checkstyle.checks.coding.NonAccessibleTypeCheck"/>
+            <description>%NonAccessibleTypeCheck.desc</description>
+            <property-metadata name="nonAccessibleTypes" datatype="Regex" default-value="">
+                <description>%NonAccessibleTypeCheck.nonAccessibleTypes</description>
+            </property-metadata>
+            <message-key key="non.accessible.type"/>
+       </rule-metadata>
+        
         <rule-metadata name="%NoNullForCollectionReturnCheck.name" internal-name="NoNullForCollectionReturnCheck" parent="TreeWalker">
             <alternative-name internal-name="com.github.sevntu.checkstyle.checks.coding.NoNullForCollectionReturnCheck"/>
             <description>%NoNullForCollectionReturnCheck.desc</description>   
