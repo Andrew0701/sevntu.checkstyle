@@ -1,8 +1,9 @@
 package com.github.sevntu.checkstyle.checks.coding;
 
 import java.util.regex.Pattern;
+import java.lang.String;
 
-public class InputNonAccessibleTypeCheck2
+public class InputNonSharableTypeCheck2
 {
     public Pattern getTestVar() //violation
     {
@@ -24,7 +25,6 @@ public class InputNonAccessibleTypeCheck2
     @Override
     public String toString()
     {
-        // TODO Auto-generated method stub
         return super.toString();
     }
 }

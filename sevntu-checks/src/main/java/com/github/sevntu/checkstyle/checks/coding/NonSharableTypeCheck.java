@@ -20,7 +20,6 @@ package com.github.sevntu.checkstyle.checks.coding;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
 
 import com.puppycrawl.tools.checkstyle.api.Check;
 import com.puppycrawl.tools.checkstyle.api.DetailAST;
@@ -28,16 +27,31 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
 
 /**
  * <p>
- * Check prohibits return the types specified via the regular expression outside the 
- * current class.
- * </p>
- * <p>
- * Example: 
- * </p>
- * <p>
  * Return Logger out of the class is the very bad practice as it produce logs that are hard
  * to investigate as logging class does not contains that code and search should be done in 
  * other classes or in hierarchy (if filed is public or accessible by other protected or package).
+ * <br>Check detects cases when user trying return the specified types outside from current class.
+ * </p>
+ * <p>
+ * Check has one parameter:<br>
+ * <b>nonSharableTypes</b> - Names of types that will restricted for public access. Names must be 
+ * qualified or canonical to avoid detecting classes that are named the same way but located in 
+ * different packages.<br>
+ * Default value for this parameter: &quot; java.util.logging.Logger, org.apache.log4j.Logger, 
+ * org.slf4j.Logger, org.apache.commons.logging.Log &quot;
+ * </p>
+ * <p>
+ * <b>Example 1.</b><br>
+ * Configuration:
+ * </p>
+ * <pre>
+ * &lt;module name="nonSharableType"&gt; 
+ *     &lt;property name="nonSharableTypes" value="org.slf4j.Logger"/&gt; 
+ * &lt;/module&gt;
+ * </pre>
+ * <p>
+ * Result:
+ * </p>
  * <pre>
  * <code>
  * package com.test;
@@ -47,7 +61,7 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
  * 
  * public class Check {
  * 
- *     private Logger log = LoggerFactory.getLogger(getClass());
+ *     private Logger log = LoggerFactory.getLogger(getClass()); //Correct
  * 
  *     protected Logger log2 = LoggerFactory.getLogger(getClass()); //Violation
  * 
@@ -61,32 +75,60 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
  * }
  * </code>
  * </pre>
- * <p> 
- * The regular expression must contain a qualified type or several types separated by "|".
+ * <b>Example 2.</b><br>
+ * Configuration:
  * </p>
- * <p>
- * Example:
- * <code>
  * <pre>
- *     java.util.regex.Pattern
- * or
- *     java.util.regex.Pattern|java.util.regex.Matcher|java.util.List
+ * &lt;module name="nonSharableType"&gt; 
+ *     &lt;property name="nonSharableTypes" value="java.util.regex.Pattern, java.util.regex.Matcher"/&gt; 
+ * &lt;/module&gt;
  * </pre>
+ * <p>
+ * Result:
+ * </p>
+ * <pre>
+ * <code>
+ * package com.test;
+ * 
+ * import java.util.regex.*;
+ * 
+ * public class Check {
+ * 
+ *     private List<Pattern> pattern1; //Correct
+ * 
+ *     List <Pattern> pattern2; //Violation
+ *     
+ *     Protected Pattern pattern3; //Violation
+ *     
+ *     public Matcher matcher1; //Violation
+ *     
+ * }    
  * </code>
+ * </pre>
  * 
  * @author <a href="mailto:andrew.uljanenko@gmail.com">Andrew Uljanenko</a>
  */
-public class NonAccessibleTypeCheck extends Check
+public class NonSharableTypeCheck extends Check
 {
     /**
-     * Key for error message.
+     * Violation message key.
      */
-    public static final String MSG_KEY = "non.accessible.type";
+    public static final String MSG_KEY = "non.sharable.type";
+    
+    /**
+     * Default configuration of check.
+     */
+    private static final String[] DEFAULT_CONFIGURATION = {
+        "java.util.logging.Logger",
+        "org.apache.log4j.Logger",
+        "org.slf4j.Logger",
+        "org.apache.commons.logging.Log"        
+    };
 
     /**
-     * Regular expression with specified types.
+     * List with specified types.
      */
-    private Pattern nonAccessibleTypes;
+    private List<String> nonSharableTypes = new ArrayList<String>();
 
     /**
      * List of on-demand-imports for current AST.
@@ -104,17 +146,23 @@ public class NonAccessibleTypeCheck extends Check
     private String packageName;
 
     /**
-     * Initialization of variable NonAccessibleTypes.
-     * @param restRictedTypes
-     *        string with types.
+     * Constructor to set default configuration.
      */
-    public void setNonAccessibleTypes(final String restrictedTypes)
+    public NonSharableTypeCheck()
     {
-        if (restrictedTypes != null && !restrictedTypes.isEmpty()) {
-            nonAccessibleTypes = Pattern.compile(restrictedTypes);
-        }
-        else {
-            nonAccessibleTypes = null;
+        setNonSharableTypes(DEFAULT_CONFIGURATION);
+    }
+    
+    /**
+     * Initialization of variable nonSharableTypes.
+     * @param nonSharableTypes
+     *        string array with types.
+     */
+    public void setNonSharableTypes(String[] nonSharableTypes)
+    {
+        this.nonSharableTypes.clear();
+        for (String currentType : nonSharableTypes) {
+            this.nonSharableTypes.add(currentType);
         }
     }
     
@@ -141,13 +189,12 @@ public class NonAccessibleTypeCheck extends Check
     public void visitToken(DetailAST node)
     {
         switch (node.getType()) {
+
             case TokenTypes.PACKAGE_DEF:
-            {
                 packageName = getIdentifierName(node);
-            }
                 break;
+    
             case TokenTypes.IMPORT:
-            {
                 String currentImport = getIdentifierName(node);
                 if (isOnDemandImport(currentImport)) {
                     onDemandImports.add(currentImport);
@@ -155,35 +202,22 @@ public class NonAccessibleTypeCheck extends Check
                 else {
                     singleTypeImports.add(currentImport);
                 }
-            }
                 break;
-            case TokenTypes.VARIABLE_DEF:
-            {
-                List<String> memberTypes = collectMemberTypes(node);
-                if (!isPrivateMember(node) && canAccessFromOutside(node)) {
-                    for (String type : memberTypes) {
-                        if (isNonAccessibleType(type)) {
-                            log(node.getLineNo(), MSG_KEY, type);
+    
+            default:
+                if (!isPrivateMember(node) && canAccessFromOutside(node)
+                        && !hasOverrideAnnotation(node)) 
+                {
+                    List<String> typesOfCurrentMember = collectMemberTypes(node);
+                    for (String currentType : typesOfCurrentMember) {
+                        if (isNonSharableType(currentType)) {
+                            log(node.getLineNo(), MSG_KEY, currentType);
                         }
                     }
                 }
-            }
-                break;
-            case TokenTypes.METHOD_DEF:
-            {
-                List<String> memberTypes = collectMemberTypes(node);
-                if (!isPrivateMember(node) && !hasOverrideAnnotation(node)) {
-                    for (String type : memberTypes) {
-                        if (isNonAccessibleType(type)) {
-                            log(node.getLineNo(), MSG_KEY, type);
-                        }
-                    }
-                }
-            }
-                break;
         }
     }
-        
+
     /**
      * Returns full name of identifier.
      * @param identifierNode
@@ -275,19 +309,19 @@ public class NonAccessibleTypeCheck extends Check
      *        String with type.
      * @return true, if current type matches with regexp.
      */
-    private boolean isNonAccessibleType(String type)
+    private boolean isNonSharableType(String memberType)
     {
-        if (nonAccessibleTypes != null) {
+        for (String currentNonSharableType : nonSharableTypes) {
             //if qualified type
-            if (nonAccessibleTypes.matcher(type).matches()) {
+            if (currentNonSharableType.equals(memberType)) {
                 return true;
             }
             else {
                 //try to join type with on-demand-imports
                 for (String currentOnDemandImport : onDemandImports) {
-                    String fullType =
-                            joinOnDemandImportWithIdentifier(currentOnDemandImport, type);
-                    if (nonAccessibleTypes.matcher(fullType).matches()) {
+                    String fullQualifiedType =
+                            joinOnDemandImportWithIdentifier(currentOnDemandImport, memberType);
+                    if (currentNonSharableType.equals(fullQualifiedType)) {
                         return true;
                     }
                 }
@@ -295,14 +329,14 @@ public class NonAccessibleTypeCheck extends Check
                 for (String currentSingleTypeImport : singleTypeImports) {
                     String importEntryLastPart = currentSingleTypeImport.
                             substring(currentSingleTypeImport.lastIndexOf(".") + 1);
-                    if (importEntryLastPart.equals(type)
-                            && nonAccessibleTypes.matcher(currentSingleTypeImport).matches()) {
+                    if (importEntryLastPart.equals(memberType)
+                            && currentNonSharableType.equals(currentSingleTypeImport)) {
                         return true;
                     }
                 }
                 //if the type described in current package
-                String fullNameWithPackage = packageName + "." + type;
-                if (nonAccessibleTypes.matcher(fullNameWithPackage).matches()) {
+                String fullTypeWithPackage = packageName + "." + memberType;
+                if (currentNonSharableType.equals(fullTypeWithPackage)) {
                     return true;
                 }
             }
@@ -334,10 +368,14 @@ public class NonAccessibleTypeCheck extends Check
     private static boolean hasOverrideAnnotation(DetailAST definitionNode)
     {
         boolean result = false;
-        DetailAST annotationNode = definitionNode.findFirstToken(TokenTypes.ANNOTATION);
-        if (annotationNode != null
-                && annotationNode.findFirstToken(TokenTypes.IDENT).getText().equals("Override")) {
-            result = true;
+        DetailAST modifiersNode = definitionNode.findFirstToken(TokenTypes.MODIFIERS);
+        if (modifiersNode != null) {
+            DetailAST annotationNode = modifiersNode.findFirstToken(TokenTypes.ANNOTATION);
+            if (annotationNode != null
+                    && annotationNode.findFirstToken(TokenTypes.IDENT) != null
+                    && annotationNode.findFirstToken(TokenTypes.IDENT).getText().equals("Override")) {
+                result = true;
+            }    
         }
         return result;
     }

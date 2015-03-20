@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 
-public class InputNonAccessibleTypeCheck4
+public class InputNonSharableTypeCheck4
 {
     interface testInterface1
     {
@@ -18,7 +18,7 @@ public class InputNonAccessibleTypeCheck4
     {
         testVar1(1), testVar2(2), testVar3(1);
         
-        private Pattern a;
+        private static Pattern a;
         private int value;
         public Pattern b; //violation
         
@@ -27,7 +27,7 @@ public class InputNonAccessibleTypeCheck4
             this.value = value;
         }
         
-        public Pattern getA() //violation
+        public static Pattern getA() //violation
         {
             return a;
         }
