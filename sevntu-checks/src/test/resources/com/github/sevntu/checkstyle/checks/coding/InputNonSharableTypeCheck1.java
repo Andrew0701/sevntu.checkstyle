@@ -3,7 +3,7 @@ package com.github.sevntu.checkstyle.checks.coding;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.*;
-import java.lang.String;
+
 
 public class InputNonSharableTypeCheck1
 {

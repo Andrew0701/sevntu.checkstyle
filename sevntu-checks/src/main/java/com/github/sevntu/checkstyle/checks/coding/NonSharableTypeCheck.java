@@ -46,6 +46,7 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
  * </p>
  * <p>
  * <b>Example 1.</b><br>
+ * Check will verify that the type org.slf4j.Logger could not back out of the current class.<br>
  * Configuration:
  * </p>
  * <pre>
@@ -80,11 +81,14 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
  * </code>
  * </pre>
  * <b>Example 2.</b><br>
+ * Check will verify that the types java.util.regex.Pattern and java.util.regex.Matcher could not 
+ * back out of the current class. Methods with annotation "MyAnnotation" will be ignored.<br>
  * Configuration:
  * </p>
  * <pre>
  * &lt;module name="nonSharableType"&gt; 
- *     &lt;property name="nonSharableTypes" value="java.util.regex.Pattern, java.util.regex.Matcher"/&gt; 
+ *     &lt;property name="nonSharableTypes" value="java.util.regex.Pattern, java.util.regex.Matcher"/&gt;
+ *     &lt;property name="ignoreAnnotationCanonicalNames" value="com.package.MyAnnotation"/&gt; 
  * &lt;/module&gt;
  * </pre>
  * <p>
@@ -105,6 +109,9 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
  *     protected Pattern pattern3; //Violation
  *     
  *     public Matcher matcher1; //Violation
+ *     
+ *     {@literal @}MyAnnotation
+ *     public Matcher method() {}; //Correct
  *     
  * }    
  * </code>
@@ -142,7 +149,6 @@ public class NonSharableTypeCheck extends Check
      */
     private static final String[] DEFAULT_ANNOTATIONS = {
       "java.lang.Override",
-      "Override",
       "com.google.common.annotations.VisibleForTesting"
     };
 
@@ -189,6 +195,11 @@ public class NonSharableTypeCheck extends Check
     {
         this.nonSharableTypes.clear();
         for (String currentType : nonSharableTypes) {
+            if (isNameInStandartPackage(currentType)) {
+                String typeNameLastPart = 
+                        currentType.substring(currentType.lastIndexOf(".") + 1);
+                this.nonSharableTypes.add(typeNameLastPart);
+            }
             this.nonSharableTypes.add(currentType);
         }
     }
@@ -201,6 +212,11 @@ public class NonSharableTypeCheck extends Check
     public void setIgnoreAnnotationCanonicalNames(String[] ignoreAnnotationCanonicalNames)
     {
         for (String currentAnnotation : ignoreAnnotationCanonicalNames) {
+            if (isNameInStandartPackage(currentAnnotation)) {
+                String annotationNameLastPart = 
+                        currentAnnotation.substring(currentAnnotation.lastIndexOf(".") + 1);
+                this.ignoreAnnotationCanonicalNames.add(annotationNameLastPart);
+            }
             this.ignoreAnnotationCanonicalNames.add(currentAnnotation);
         }
     }
@@ -244,12 +260,20 @@ public class NonSharableTypeCheck extends Check
                 break;
     
             case TokenTypes.VARIABLE_DEF:
+                if (!isPrivateMember(node) && isAccessibleFromOutside(node)) {
+                    List<String> variableType = collectMemberTypes(node);
+                    for (String currentType : variableType) {
+                        if (isExpectedName(currentType, nonSharableTypes)) {
+                            log(node.getLineNo(), MSG_KEY, currentType);
+                        }
+                    }
+                }
+                break;
+                
             case TokenTypes.METHOD_DEF:
-                if (!isPrivateMember(node) && isAccessibleFromOutside(node)
-                        && !hasIgnoreAnnotation(node)) 
-                {
-                    List<String> typesOfCurrentMember = collectMemberTypes(node);
-                    for (String currentType : typesOfCurrentMember) {
+                if (!isPrivateMember(node) && !hasIgnoreAnnotation(node)) {
+                    List<String> typeOfMethodReturn = collectMemberTypes(node);
+                    for (String currentType : typeOfMethodReturn) {
                         if (isExpectedName(currentType, nonSharableTypes)) {
                             log(node.getLineNo(), MSG_KEY, currentType);
                         }
@@ -259,13 +283,13 @@ public class NonSharableTypeCheck extends Check
         }
     }
 
-    
-
     /**
-     * Checks matches current type regular expression.
-     * @param type
-     *        String with type.
-     * @return true, if current type matches with regexp.
+     * Compares the current name and the expected.
+     * @param memberName
+     *        String with current name.
+     * @param listWithNames
+     *        List with expected names.
+     * @return true, if current name is equal to expected.
      */
     private boolean isExpectedName(String memberName, List<String> listWithNames)
     {
@@ -348,6 +372,18 @@ public class NonSharableTypeCheck extends Check
             result = true;
         }
         return result;
+    }
+    
+    /**
+     * Checks the location of the member.
+     * @param memberName
+     * @return true, if member located in standard package.
+     */
+    private static boolean isNameInStandartPackage(String memberName)
+    {
+        String memberNameLastPart =
+                memberName.substring(0, memberName.lastIndexOf("."));
+        return memberNameLastPart.equals("java.lang");
     }
     
     /**
