@@ -21,6 +21,7 @@ package com.github.sevntu.checkstyle.checks.coding;
 import static com.github.sevntu.checkstyle.checks.coding.NonSharableTypeCheck.*;
 
 import org.junit.Test;
+
 import com.github.sevntu.checkstyle.BaseCheckTestSupport;
 import com.puppycrawl.tools.checkstyle.DefaultConfiguration;
 
@@ -60,11 +61,13 @@ public class NonSharableTypeCheckTest
     {
         DefaultConfiguration checkConfig = createCheckConfig(NonSharableTypeCheck.class);
         final String[] expected = {
-                "8: " + getCheckMessage(MSG_KEY, "Pattern"),
-                "13: " + getCheckMessage(MSG_KEY, "java.util.regex.Pattern"),
+                "11: " + getCheckMessage(MSG_KEY, "Pattern"),
+                "16: " + getCheckMessage(MSG_KEY, "java.util.regex.Pattern"),
         };
         
         checkConfig.addAttribute("nonSharableTypes", "java.util.regex.Pattern, java.lang.String");
+        checkConfig.addAttribute("ignoreAnnotationCanonicalNames", "com.github.sevntu.checkstyle." 
+                + "checks.coding.InputNonSharableTypeCheck6.myAnnotation");
         verify(checkConfig, getPath("InputNonSharableTypeCheck2.java"), expected);
     }
     

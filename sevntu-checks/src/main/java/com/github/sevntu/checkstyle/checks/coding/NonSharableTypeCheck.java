@@ -27,18 +27,22 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
 
 /**
  * <p>
- * Return Logger out of the class is the very bad practice as it produce logs that are hard
+ * Checks that certain type members or reference to type instances are not accessible from outside 
+ * of a class. <br>
+ * Example: Return Logger out of the class is the very bad practice as it produce logs that are hard
  * to investigate as logging class does not contains that code and search should be done in 
  * other classes or in hierarchy (if filed is public or accessible by other protected or package).
- * <br>Check detects cases when user trying return the specified types outside from current class.
  * </p>
  * <p>
- * Check has one parameter:<br>
+ * Check has two parameters:<br>
  * <b>nonSharableTypes</b> - Names of types that will restricted for public access. Names must be 
  * qualified or canonical to avoid detecting classes that are named the same way but located in 
  * different packages.<br>
  * Default value for this parameter: &quot; java.util.logging.Logger, org.apache.log4j.Logger, 
- * org.slf4j.Logger, org.apache.commons.logging.Log &quot;
+ * org.slf4j.Logger, org.apache.commons.logging.Log &quot;<br>
+ * <b>ignoreAnnotationCanonicalNames</b> - Names of annotations that will ignored for this check.<br>
+ * Default value for this parameter : &quot; java.lang.Override, 
+ * com.google.common.annotations.VisibleForTesting &quot;
  * </p>
  * <p>
  * <b>Example 1.</b><br>
@@ -98,12 +102,20 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
  * 
  *     List <Pattern> pattern2; //Violation
  *     
- *     Protected Pattern pattern3; //Violation
+ *     protected Pattern pattern3; //Violation
  *     
  *     public Matcher matcher1; //Violation
  *     
  * }    
  * </code>
+ * </pre>
+ * <p>
+ * For suppress this check on projects that do management of Loggers you should use 
+ * <a href="http://checkstyle.sourceforge.net/config.html#SuppressionFilter">SuppressionFilter</a><br>
+ * Example of configuration:<br>
+ * </p>
+ * <pre>
+ * &lt;suppress checks="NonSharableTypeCheck" files="com[\\/]mycompany[\\/]app[\\/]logging.*[\\/].*.java"/&gt;
  * </pre>
  * 
  * @author <a href="mailto:andrew.uljanenko@gmail.com">Andrew Uljanenko</a>
@@ -116,19 +128,33 @@ public class NonSharableTypeCheck extends Check
     public static final String MSG_KEY = "non.sharable.type";
     
     /**
-     * Default configuration of check.
+     * Default non sharable types.
      */
-    private static final String[] DEFAULT_CONFIGURATION = {
+    private static final String[] DEFAULT_TYPES = {
         "java.util.logging.Logger",
         "org.apache.log4j.Logger",
         "org.slf4j.Logger",
         "org.apache.commons.logging.Log"        
+    };
+    
+    /**
+     * Default ignore annotation canonical names.
+     */
+    private static final String[] DEFAULT_ANNOTATIONS = {
+      "java.lang.Override",
+      "Override",
+      "com.google.common.annotations.VisibleForTesting"
     };
 
     /**
      * List with specified types.
      */
     private List<String> nonSharableTypes = new ArrayList<String>();
+    
+    /**
+     * List with specified ignored annotations.
+     */
+    private List<String> ignoreAnnotationCanonicalNames = new ArrayList<String>();
 
     /**
      * List of on-demand-imports for current AST.
@@ -150,7 +176,8 @@ public class NonSharableTypeCheck extends Check
      */
     public NonSharableTypeCheck()
     {
-        setNonSharableTypes(DEFAULT_CONFIGURATION);
+        setNonSharableTypes(DEFAULT_TYPES);
+        setIgnoreAnnotationCanonicalNames(DEFAULT_ANNOTATIONS);
     }
     
     /**
@@ -163,6 +190,18 @@ public class NonSharableTypeCheck extends Check
         this.nonSharableTypes.clear();
         for (String currentType : nonSharableTypes) {
             this.nonSharableTypes.add(currentType);
+        }
+    }
+    
+    /**
+     * Initialization of variable ignoreAnnotationCanonicalNames.
+     * @param ignoreAnnotationCanonicalNames
+     *        string array with annotation names.
+     */
+    public void setIgnoreAnnotationCanonicalNames(String[] ignoreAnnotationCanonicalNames)
+    {
+        for (String currentAnnotation : ignoreAnnotationCanonicalNames) {
+            this.ignoreAnnotationCanonicalNames.add(currentAnnotation);
         }
     }
     
@@ -204,27 +243,120 @@ public class NonSharableTypeCheck extends Check
                 }
                 break;
     
-            default:
-                if (!isPrivateMember(node) && canAccessFromOutside(node)
-                        && !hasOverrideAnnotation(node)) 
+            case TokenTypes.VARIABLE_DEF:
+            case TokenTypes.METHOD_DEF:
+                if (!isPrivateMember(node) && isAccessibleFromOutside(node)
+                        && !hasIgnoreAnnotation(node)) 
                 {
                     List<String> typesOfCurrentMember = collectMemberTypes(node);
                     for (String currentType : typesOfCurrentMember) {
-                        if (isNonSharableType(currentType)) {
+                        if (isExpectedName(currentType, nonSharableTypes)) {
                             log(node.getLineNo(), MSG_KEY, currentType);
                         }
                     }
                 }
+                break;
         }
     }
 
+    
+
+    /**
+     * Checks matches current type regular expression.
+     * @param type
+     *        String with type.
+     * @return true, if current type matches with regexp.
+     */
+    private boolean isExpectedName(String memberName, List<String> listWithNames)
+    {
+        boolean result = false;
+        for (String currentName : listWithNames) {
+            //if qualified type
+            if (currentName.equals(memberName)) {
+                result = true;
+            }
+            else {
+                //try to join type with on-demand-imports
+                for (String currentOnDemandImport : onDemandImports) {
+                    String fullQualifiedType =
+                            joinOnDemandImportWithIdentifier(currentOnDemandImport, memberName);
+                    if (currentName.equals(fullQualifiedType)) {
+                        result = true;
+                        break;
+                    }
+                }
+                //try to join type with single-type-imports
+                for (String currentSingleTypeImport : singleTypeImports) {
+                    String importEntryLastPart = currentSingleTypeImport.
+                            substring(currentSingleTypeImport.lastIndexOf(".") + 1);
+                    if (importEntryLastPart.equals(memberName)
+                            && currentName.equals(currentSingleTypeImport)) {
+                        result = true;
+                        break;
+                    }
+                }
+                //if the type described in current package
+                String fullTypeWithPackage = packageName + "." + memberName;
+                if (currentName.equals(fullTypeWithPackage)) {
+                    result = true;
+                    break;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Checks for ignore annotation.
+     * @param definitionNode
+     *        AST method definition node.
+     * @return true, if method has ignoring annotation.
+     */
+    private boolean hasIgnoreAnnotation(DetailAST definitionNode)
+    {
+        boolean result = false;
+        DetailAST modifiersNode = definitionNode.findFirstToken(TokenTypes.MODIFIERS);
+        if (modifiersNode != null) {
+            DetailAST annotationNode = modifiersNode.findFirstToken(TokenTypes.ANNOTATION);
+            if (annotationNode != null) {
+                String annotationName = getIdentifierName(annotationNode);
+                if (isExpectedName(annotationName, ignoreAnnotationCanonicalNames)) {
+                    result = true;
+                }
+            }    
+        }
+        return result;
+    }
+
+    /**
+     * Checks where there is a field(in class, enum or interface), and whether you can get access to
+     * it.
+     * @param defNode
+     *        AST field definition node.
+     * @return true, if field is not private and accessible from outside.
+     */
+    private boolean isAccessibleFromOutside(DetailAST fieldDefNode)
+    {
+        boolean result = false;
+        DetailAST definitionNode = fieldDefNode.getParent().getParent();
+        if ((definitionNode.getType() == TokenTypes.CLASS_DEF
+                && !isClassDefInMethodDef(definitionNode)
+                && isAccessibleFromOutsideClass(definitionNode))
+                || definitionNode.getType() == TokenTypes.ENUM_DEF
+                || definitionNode.getType() == TokenTypes.INTERFACE_DEF) {
+            result = true;
+        }
+        return result;
+    }
+    
     /**
      * Returns full name of identifier.
      * @param identifierNode
      *        AST node.
      * @return string with full name of current identifier.
      */
-    private String getIdentifierName(DetailAST identifierNode)
+    private static String getIdentifierName(DetailAST identifierNode)
     {
         DetailAST identNode = identifierNode.findFirstToken(TokenTypes.IDENT);
         DetailAST dotNode = identifierNode.findFirstToken(TokenTypes.DOT);
@@ -265,7 +397,7 @@ public class NonSharableTypeCheck extends Check
      *        AST definition node.
      * @return list, which contains all member types.
      */
-    private List<String> collectMemberTypes(DetailAST definitionNode)
+    private static List<String> collectMemberTypes(DetailAST definitionNode)
     {
         List<String> memberTypes = new ArrayList<String>();
         DetailAST typeNode = definitionNode.findFirstToken(TokenTypes.TYPE);
@@ -292,8 +424,8 @@ public class NonSharableTypeCheck extends Check
      *        AST definition node.
      * @return true, if member is private.
      */
-    private boolean isPrivateMember(DetailAST definitionNode)
-    {
+    private static boolean isPrivateMember(DetailAST definitionNode)
+    { 
         boolean result = false;
         DetailAST modifiersNode = definitionNode.findFirstToken(TokenTypes.MODIFIERS);
         if (modifiersNode != null &&
@@ -302,49 +434,7 @@ public class NonSharableTypeCheck extends Check
         }
         return result;
     }
-
-    /**
-     * Checks matches current type regular expression.
-     * @param type
-     *        String with type.
-     * @return true, if current type matches with regexp.
-     */
-    private boolean isNonSharableType(String memberType)
-    {
-        for (String currentNonSharableType : nonSharableTypes) {
-            //if qualified type
-            if (currentNonSharableType.equals(memberType)) {
-                return true;
-            }
-            else {
-                //try to join type with on-demand-imports
-                for (String currentOnDemandImport : onDemandImports) {
-                    String fullQualifiedType =
-                            joinOnDemandImportWithIdentifier(currentOnDemandImport, memberType);
-                    if (currentNonSharableType.equals(fullQualifiedType)) {
-                        return true;
-                    }
-                }
-                //try to join type with single-type-imports
-                for (String currentSingleTypeImport : singleTypeImports) {
-                    String importEntryLastPart = currentSingleTypeImport.
-                            substring(currentSingleTypeImport.lastIndexOf(".") + 1);
-                    if (importEntryLastPart.equals(memberType)
-                            && currentNonSharableType.equals(currentSingleTypeImport)) {
-                        return true;
-                    }
-                }
-                //if the type described in current package
-                String fullTypeWithPackage = packageName + "." + memberType;
-                if (currentNonSharableType.equals(fullTypeWithPackage)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
+    
     /**
      * Joins on demand import entry and identifier name into fully qualified name.
      * @param importEntry
@@ -360,54 +450,12 @@ public class NonSharableTypeCheck extends Check
     }
 
     /**
-     * Checks for @Override annotation.
-     * @param definitionNode
-     *        AST method definition node.
-     * @return true, if method has @Override annotation.
-     */
-    private static boolean hasOverrideAnnotation(DetailAST definitionNode)
-    {
-        boolean result = false;
-        DetailAST modifiersNode = definitionNode.findFirstToken(TokenTypes.MODIFIERS);
-        if (modifiersNode != null) {
-            DetailAST annotationNode = modifiersNode.findFirstToken(TokenTypes.ANNOTATION);
-            if (annotationNode != null
-                    && annotationNode.findFirstToken(TokenTypes.IDENT) != null
-                    && annotationNode.findFirstToken(TokenTypes.IDENT).getText().equals("Override")) {
-                result = true;
-            }    
-        }
-        return result;
-    }
-
-    /**
-     * Checks where there is a field(in class, enum or interface), and whether you can get access to
-     * it.
-     * @param defNode
-     *        AST field definition node.
-     * @return true, if field is not private and accessible from outside.
-     */
-    private boolean canAccessFromOutside(DetailAST fieldDefNode)
-    {
-        boolean result = false;
-        DetailAST definitionNode = fieldDefNode.getParent().getParent();
-        if ((definitionNode.getType() == TokenTypes.CLASS_DEF
-                && !isClassDefInMethodDef(definitionNode)
-                && isAccessibleFromOutsideClass(definitionNode))
-                || definitionNode.getType() == TokenTypes.ENUM_DEF
-                || definitionNode.getType() == TokenTypes.INTERFACE_DEF) {
-            result = true;
-        }
-        return result;
-    }
-
-    /**
      * Checks nesting of classes and the ability to access them.
      * @param definitionNode
      *        AST definition node.
      * @return true, if external classes are not private.
      */
-    private boolean isAccessibleFromOutsideClass(DetailAST definitionNode)
+    private static boolean isAccessibleFromOutsideClass(DetailAST definitionNode)
     {
         boolean result = true;
         DetailAST currentNode = definitionNode;
@@ -427,7 +475,7 @@ public class NonSharableTypeCheck extends Check
      *        AST definition node.
      * @return true, if class definition is in method definition.
      */
-    private boolean isClassDefInMethodDef(DetailAST classDefNode)
+    private static boolean isClassDefInMethodDef(DetailAST classDefNode)
     {
         boolean result = false;
         DetailAST currentParentNode = classDefNode.getParent();
