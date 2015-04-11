@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 // checkstyle: Checks Java source code for adherence to a set of rules.
-// Copyright (C) 2001-2012  Oliver Burn
+// Copyright (C) 2001-2015 the original author or authors.
 //
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -66,7 +66,7 @@ public class NonSharableTypeCheckTest
         };
         
         checkConfig.addAttribute("nonSharableTypes", "java.util.regex.Pattern, java.lang.String");
-        checkConfig.addAttribute("ignoreAnnotationCanonicalNames", "com.github.sevntu.checkstyle." 
+        checkConfig.addAttribute("ignoreAnnotations", "com.github.sevntu.checkstyle." 
                 + "checks.coding.InputNonSharableTypeCheck6.myAnnotation");
         verify(checkConfig, getPath("InputNonSharableTypeCheck2.java"), expected);
     }

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 // checkstyle: Checks Java source code for adherence to a set of rules.
-// Copyright (C) 2001-2011  Oliver Burn
+// Copyright (C) 2001-2015 the original author or authors.
 //
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -40,7 +40,7 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
  * different packages.<br>
  * Default value for this parameter: &quot; java.util.logging.Logger, org.apache.log4j.Logger, 
  * org.slf4j.Logger, org.apache.commons.logging.Log &quot;<br>
- * <b>ignoreAnnotationCanonicalNames</b> - Names of annotations that will ignored for this check.<br>
+ * <b>ignoreAnnotations</b> - Names of annotations that will ignored for this check.<br>
  * Default value for this parameter : &quot; java.lang.Override, 
  * com.google.common.annotations.VisibleForTesting &quot;
  * </p>
@@ -88,7 +88,7 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
  * <pre>
  * &lt;module name="nonSharableType"&gt; 
  *     &lt;property name="nonSharableTypes" value="java.util.regex.Pattern, java.util.regex.Matcher"/&gt;
- *     &lt;property name="ignoreAnnotationCanonicalNames" value="com.package.MyAnnotation"/&gt; 
+ *     &lt;property name="ignoreAnnotationCanonicalNames" value="java.lang.SuppressWarnings"/&gt; 
  * &lt;/module&gt;
  * </pre>
  * <p>
@@ -110,7 +110,7 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
  *     
  *     public Matcher matcher1; //Violation
  *     
- *     {@literal @}MyAnnotation
+ *     {@literal @}SuppressWarnings
  *     public Matcher method() {}; //Correct
  *     
  * }    
@@ -122,7 +122,7 @@ import com.puppycrawl.tools.checkstyle.api.TokenTypes;
  * Example of configuration:<br>
  * </p>
  * <pre>
- * &lt;suppress checks="NonSharableTypeCheck" files="com[\\/]mycompany[\\/]app[\\/]logging.*[\\/].*.java"/&gt;
+ * &lt;suppress checks="NonSharableType" files="com[\\/]mycompany[\\/]app[\\/]logging.*[\\/].*.java"/&gt;
  * </pre>
  * 
  * @author <a href="mailto:andrew.uljanenko@gmail.com">Andrew Uljanenko</a>
@@ -160,22 +160,22 @@ public class NonSharableTypeCheck extends Check
     /**
      * List with specified ignored annotations.
      */
-    private List<String> ignoreAnnotationCanonicalNames = new ArrayList<String>();
+    private List<String> ignoreAnnotations = new ArrayList<String>();
 
     /**
      * List of on-demand-imports for current AST.
      */
-    private List<String> onDemandImports = new ArrayList<String>();
+    private static List<String> onDemandImports = new ArrayList<String>();
 
     /**
      * List of single-type-imports for current AST.
      */
-    private List<String> singleTypeImports = new ArrayList<String>();
+    private static List<String> singleTypeImports = new ArrayList<String>();
 
     /**
      * Name of current package.
      */
-    private String packageName;
+    private static String packageName;
 
     /**
      * Constructor to set default configuration.
@@ -183,7 +183,7 @@ public class NonSharableTypeCheck extends Check
     public NonSharableTypeCheck()
     {
         setNonSharableTypes(DEFAULT_TYPES);
-        setIgnoreAnnotationCanonicalNames(DEFAULT_ANNOTATIONS);
+        setIgnoreAnnotations(DEFAULT_ANNOTATIONS);
     }
     
     /**
@@ -195,7 +195,7 @@ public class NonSharableTypeCheck extends Check
     {
         this.nonSharableTypes.clear();
         for (String currentType : nonSharableTypes) {
-            if (isNameInStandartPackage(currentType)) {
+            if (isStandardName(currentType)) {
                 String typeNameLastPart = 
                         currentType.substring(currentType.lastIndexOf(".") + 1);
                 this.nonSharableTypes.add(typeNameLastPart);
@@ -205,24 +205,46 @@ public class NonSharableTypeCheck extends Check
     }
     
     /**
-     * Initialization of variable ignoreAnnotationCanonicalNames.
-     * @param ignoreAnnotationCanonicalNames
+     * Initialization of variable ignoreAnnotations.
+     * @param ignoreAnnotations
      *        string array with annotation names.
      */
-    public void setIgnoreAnnotationCanonicalNames(String[] ignoreAnnotationCanonicalNames)
+    public void setIgnoreAnnotations(String[] ignoreAnnotations)
     {
-        for (String currentAnnotation : ignoreAnnotationCanonicalNames) {
-            if (isNameInStandartPackage(currentAnnotation)) {
+        for (String currentAnnotation : ignoreAnnotations) {
+            if (isStandardName(currentAnnotation)) {
                 String annotationNameLastPart = 
                         currentAnnotation.substring(currentAnnotation.lastIndexOf(".") + 1);
-                this.ignoreAnnotationCanonicalNames.add(annotationNameLastPart);
+                this.ignoreAnnotations.add(annotationNameLastPart);
             }
-            this.ignoreAnnotationCanonicalNames.add(currentAnnotation);
+            this.ignoreAnnotations.add(currentAnnotation);
         }
     }
     
     @Override
+    public final int[] getAcceptableTokens()
+    {
+        return new int[] {
+                TokenTypes.PACKAGE_DEF,
+                TokenTypes.IMPORT,
+                TokenTypes.VARIABLE_DEF,
+                TokenTypes.METHOD_DEF,
+        };
+    }
+    
+    @Override
     public final int[] getDefaultTokens()
+    {
+        return new int[] {
+                TokenTypes.PACKAGE_DEF,
+                TokenTypes.IMPORT,
+                TokenTypes.VARIABLE_DEF,
+                TokenTypes.METHOD_DEF,
+        };
+    }
+    
+    @Override
+    public final int[] getRequiredTokens()
     {
         return new int[] {
                 TokenTypes.PACKAGE_DEF,
@@ -260,10 +282,10 @@ public class NonSharableTypeCheck extends Check
                 break;
     
             case TokenTypes.VARIABLE_DEF:
-                if (!isPrivateMember(node) && isAccessibleFromOutside(node)) {
-                    List<String> variableType = collectMemberTypes(node);
-                    for (String currentType : variableType) {
-                        if (isExpectedName(currentType, nonSharableTypes)) {
+                if (isMember(node) && !isPrivateMember(node) && isAccessibleFromOutside(node)) {
+                    List<String> variableTypes = getMemberTypes(node);
+                    for (String currentType : variableTypes) {
+                        if (containsCurrentName(currentType, nonSharableTypes)) {
                             log(node.getLineNo(), MSG_KEY, currentType);
                         }
                     }
@@ -272,58 +294,64 @@ public class NonSharableTypeCheck extends Check
                 
             case TokenTypes.METHOD_DEF:
                 if (!isPrivateMember(node) && !hasIgnoreAnnotation(node)) {
-                    List<String> typeOfMethodReturn = collectMemberTypes(node);
-                    for (String currentType : typeOfMethodReturn) {
-                        if (isExpectedName(currentType, nonSharableTypes)) {
+                    List<String> typesOfMethodReturn = getMemberTypes(node);
+                    for (String currentType : typesOfMethodReturn) {
+                        if (containsCurrentName(currentType, nonSharableTypes)) {
                             log(node.getLineNo(), MSG_KEY, currentType);
                         }
                     }
                 }
                 break;
+            default:
+                throw new IllegalStateException(node.toString());
         }
     }
 
     /**
-     * Compares the current name and the expected.
-     * @param memberName
+     * Checks whether the given name in the list.
+     * @param verifiableName
      *        String with current name.
      * @param listWithNames
      *        List with expected names.
-     * @return true, if current name is equal to expected.
+     * @return true, if current name is in the list.
      */
-    private boolean isExpectedName(String memberName, List<String> listWithNames)
+    private static boolean containsCurrentName(String verifiableName, List<String> listWithNames)
     {
         boolean result = false;
         for (String currentName : listWithNames) {
             //if qualified type
-            if (currentName.equals(memberName)) {
+            if (currentName.equals(verifiableName)) {
                 result = true;
             }
             else {
                 //try to join type with on-demand-imports
                 for (String currentOnDemandImport : onDemandImports) {
-                    String fullQualifiedType =
-                            joinOnDemandImportWithIdentifier(currentOnDemandImport, memberName);
-                    if (currentName.equals(fullQualifiedType)) {
+                    String fullyQualifiedType =
+                            joinOnDemandImportWithIdentifier(currentOnDemandImport, verifiableName);
+                    if (currentName.equals(fullyQualifiedType)) {
                         result = true;
                         break;
                     }
                 }
-                //try to join type with single-type-imports
-                for (String currentSingleTypeImport : singleTypeImports) {
-                    String importEntryLastPart = currentSingleTypeImport.
-                            substring(currentSingleTypeImport.lastIndexOf(".") + 1);
-                    if (importEntryLastPart.equals(memberName)
-                            && currentName.equals(currentSingleTypeImport)) {
+                if (!result) {
+                    //try to join type with single-type-imports
+                    for (String currentSingleTypeImport : singleTypeImports) {
+                        String importEntryLastPart = currentSingleTypeImport.
+                                substring(currentSingleTypeImport.lastIndexOf(".") + 1);
+                        if (importEntryLastPart.equals(verifiableName)
+                                && currentName.equals(currentSingleTypeImport)) {
+                            result = true;
+                            break;
+                        }
+                    }
+                }
+                if (!result) {
+                    //if the type described in current package
+                    String fullyQualifiedTypeWithPackage = packageName + "." + verifiableName;
+                    if (currentName.equals(fullyQualifiedTypeWithPackage)) {
                         result = true;
                         break;
                     }
-                }
-                //if the type described in current package
-                String fullTypeWithPackage = packageName + "." + memberName;
-                if (currentName.equals(fullTypeWithPackage)) {
-                    result = true;
-                    break;
                 }
             }
         }
@@ -345,7 +373,7 @@ public class NonSharableTypeCheck extends Check
             DetailAST annotationNode = modifiersNode.findFirstToken(TokenTypes.ANNOTATION);
             if (annotationNode != null) {
                 String annotationName = getIdentifierName(annotationNode);
-                if (isExpectedName(annotationName, ignoreAnnotationCanonicalNames)) {
+                if (containsCurrentName(annotationName, ignoreAnnotations)) {
                     result = true;
                 }
             }    
@@ -360,13 +388,13 @@ public class NonSharableTypeCheck extends Check
      *        AST field definition node.
      * @return true, if field is not private and accessible from outside.
      */
-    private boolean isAccessibleFromOutside(DetailAST fieldDefNode)
+    private static boolean isAccessibleFromOutside(DetailAST fieldDefNode)
     {
         boolean result = false;
         DetailAST definitionNode = fieldDefNode.getParent().getParent();
         if ((definitionNode.getType() == TokenTypes.CLASS_DEF
-                && !isClassDefInMethodDef(definitionNode)
-                && isAccessibleFromOutsideClass(definitionNode))
+                    && !isClassDefInMethodDef(definitionNode)
+                    && isAccessibleFromOutsideClass(definitionNode))
                 || definitionNode.getType() == TokenTypes.ENUM_DEF
                 || definitionNode.getType() == TokenTypes.INTERFACE_DEF) {
             result = true;
@@ -379,7 +407,7 @@ public class NonSharableTypeCheck extends Check
      * @param memberName
      * @return true, if member located in standard package.
      */
-    private static boolean isNameInStandartPackage(String memberName)
+    private static boolean isStandardName(String memberName)
     {
         String memberNameLastPart =
                 memberName.substring(0, memberName.lastIndexOf("."));
@@ -428,12 +456,12 @@ public class NonSharableTypeCheck extends Check
     }
 
     /**
-     * Collects all member types. If there is generic type, then method will return all of types.
+     * Return all member types from declaration.
      * @param definitionNode
      *        AST definition node.
      * @return list, which contains all member types.
      */
-    private static List<String> collectMemberTypes(DetailAST definitionNode)
+    private static List<String> getMemberTypes(DetailAST definitionNode)
     {
         List<String> memberTypes = new ArrayList<String>();
         DetailAST typeNode = definitionNode.findFirstToken(TokenTypes.TYPE);
@@ -452,6 +480,19 @@ public class NonSharableTypeCheck extends Check
             }
         }
         return memberTypes;
+    }
+
+    /**
+     * Checks whether the field a member of the class.
+     * @param definitionNode
+     *        AST definition node.
+     * @return true, if a field is a member.
+     */
+    private static boolean isMember(DetailAST definitionNode)
+    {
+        return definitionNode.getParent().getParent().getType() == TokenTypes.CLASS_DEF
+                || definitionNode.getParent().getParent().getType() == TokenTypes.INTERFACE_DEF
+                || definitionNode.getParent().getParent().getType() == TokenTypes.ENUM_DEF;
     }
 
     /**
